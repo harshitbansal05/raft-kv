@@ -42,6 +42,7 @@ func newResolverRunner(schedulerClient scheduler_client.Client) *resolverRunner 
 	}
 }
 
+// Gets store's address from the scheduler client
 func (r *resolverRunner) getAddr(id uint64) (string, error) {
 	if sa, ok := r.storeAddrs[id]; ok {
 		if time.Since(sa.lastUpdate).Seconds() < storeAddressRefreshSeconds {

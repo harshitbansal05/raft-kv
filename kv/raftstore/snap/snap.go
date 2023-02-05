@@ -108,11 +108,11 @@ func NewApplyOptions(db *badger.DB, region *metapb.Region) *ApplyOptions {
 
 // `Snapshot` is an interface for snapshot.
 // It's used in these scenarios:
-//   1. build local snapshot
-//   2. read local snapshot and then replicate it to remote raftstores
-//   3. receive snapshot from remote raftstore and write it to local storage
-//   4. apply snapshot
-//   5. snapshot gc
+//  1. build local snapshot
+//  2. read local snapshot and then replicate it to remote raftstores
+//  3. receive snapshot from remote raftstore and write it to local storage
+//  4. apply snapshot
+//  5. snapshot gc
 type Snapshot interface {
 	io.Reader
 	io.Writer
@@ -144,6 +144,7 @@ func retryDeleteSnapshot(deleter SnapshotDeleter, key SnapKey, snap Snapshot) bo
 	return false
 }
 
+// Gets CF, Size, Checksum from cFFiles, and returns them.
 func genSnapshotMeta(cfFiles []*CFFile) (*rspb.SnapshotMeta, error) {
 	cfMetas := make([]*rspb.SnapshotCFFile, 0, len(engine_util.CFs))
 	for _, cfFile := range cfFiles {
@@ -235,6 +236,9 @@ type Snap struct {
 	holdTmpFiles bool
 }
 
+// Does the following steps:
+// 1. Path of CF file: dir/{gen/rev}_<region_id>_<term>_<index>_{default/write/lock}.sst
+// 2. Path of meta file: dir/{gen/rev}.meta
 func NewSnap(dir string, key SnapKey, sizeTrack *int64, isSending, toBuild bool,
 	deleter SnapshotDeleter) (*Snap, error) {
 	if !util.DirExists(dir) {
@@ -295,6 +299,8 @@ func NewSnap(dir string, key SnapKey, sizeTrack *int64, isSending, toBuild bool,
 	return s, nil
 }
 
+// If s exists, returns. Else creates .tmp meta and CF files. Sets s.holdTmpFiles to true.
+// Sets MetaFile.File to the tmp file. Sets cfFile.SstWriter to the .tmp CF file.
 func NewSnapForBuilding(dir string, key SnapKey, sizeTrack *int64, deleter SnapshotDeleter) (*Snap, error) {
 	s, err := NewSnap(dir, key, sizeTrack, true, true, deleter)
 	if err != nil {
@@ -307,6 +313,7 @@ func NewSnapForBuilding(dir string, key SnapKey, sizeTrack *int64, deleter Snaps
 	return s, nil
 }
 
+// If s does not exists, return. If it does, opens the files at CFFile.Path, and sets it to CFFile.File
 func NewSnapForSending(dir string, key SnapKey, sizeTrack *int64, deleter SnapshotDeleter) (*Snap, error) {
 	s, err := NewSnap(dir, key, sizeTrack, true, false, deleter)
 	if err != nil {
@@ -328,6 +335,8 @@ func NewSnapForSending(dir string, key SnapKey, sizeTrack *int64, deleter Snapsh
 	return s, nil
 }
 
+// If s does exists, return. Else creates .tmp meta and CF files. Sets s.holdTmpFiles to true.
+// Sets MetaFile.File and CFFile.File to the tmp file.
 func NewSnapForReceiving(dir string, key SnapKey, snapshotMeta *rspb.SnapshotMeta,
 	sizeTrack *int64, deleter SnapshotDeleter) (*Snap, error) {
 	s, err := NewSnap(dir, key, sizeTrack, false, false, deleter)
@@ -366,6 +375,8 @@ func NewSnapForApplying(dir string, key SnapKey, sizeTrack *int64, deleter Snaps
 	return NewSnap(dir, key, sizeTrack, false, false, deleter)
 }
 
+// If s exists, returns. Else creates .tmp meta and CF files. Sets s.holdTmpFiles to true.
+// Sets MetaFile.File to the tmp file. Sets cfFile.SstWriter to the .tmp CF file.
 func (s *Snap) initForBuilding() error {
 	if s.Exists() {
 		return nil
@@ -386,6 +397,7 @@ func (s *Snap) initForBuilding() error {
 	return nil
 }
 
+// Unmarshals snapshotMeta from s.MetaFile.Path.
 func (s *Snap) readSnapshotMeta() (*rspb.SnapshotMeta, error) {
 	fi, err := os.Stat(s.MetaFile.Path)
 	if err != nil {
@@ -409,6 +421,7 @@ func (s *Snap) readSnapshotMeta() (*rspb.SnapshotMeta, error) {
 	return snapshotMeta, nil
 }
 
+// Reverse of genSnapshotMeta(). Sets the Size and Checksum attributes of CFFile after reading from snapshotMeta.
 func (s *Snap) setSnapshotMeta(snapshotMeta *rspb.SnapshotMeta) error {
 	if len(snapshotMeta.CfFiles) != len(s.CFFiles) {
 		return errors.Errorf("invalid CF number of snapshot meta, expect %d, got %d",
@@ -433,6 +446,7 @@ func (s *Snap) setSnapshotMeta(snapshotMeta *rspb.SnapshotMeta) error {
 	return nil
 }
 
+// Calls readSnapshotMeta and then setSnapshotMeta.
 func (s *Snap) loadSnapMeta() error {
 	snapshotMeta, err := s.readSnapshotMeta()
 	if err != nil {
@@ -467,6 +481,7 @@ func (s *Snap) validate() error {
 	return nil
 }
 
+// Cloes sstWriter, and renames CF file at tmpPath to Path.
 func (s *Snap) saveCFFiles() error {
 	for _, cfFile := range s.CFFiles {
 		if cfFile.KVCount > 0 {
@@ -503,6 +518,7 @@ func (s *Snap) saveCFFiles() error {
 	return nil
 }
 
+// Reads s.MetaFile.Meta and writes it to MetaFile.File (which is at the tmp file path). Sets s.holdTmpFiles to false.
 func (s *Snap) saveMetaFile() error {
 	bin, err := s.MetaFile.Meta.Marshal()
 	if err != nil {
@@ -520,6 +536,8 @@ func (s *Snap) saveMetaFile() error {
 	return nil
 }
 
+// If s exists, returns. Builds the snapshot by using builder.build function. Calls s.saveCFFiles() and then calls genSnapshotMeta to generate
+// metadata from the Cf files. Sets the generated meta to s.MetaFile.Meta and and then calls s.saveMetaFile().
 func (s *Snap) Build(dbSnap *badger.Txn, region *metapb.Region, snapData *rspb.RaftSnapshotData, stat *SnapStatistics, deleter SnapshotDeleter) error {
 	if s.Exists() {
 		err := s.validate()
@@ -582,6 +600,7 @@ func (s *Snap) Exists() bool {
 	return util.FileExists(s.MetaFile.Path)
 }
 
+// Deletes snapshot files, taking into consideration the tmp files.
 func (s *Snap) Delete() {
 	log.Debugf("deleting %s", s.Path())
 	for _, cfFile := range s.CFFiles {
@@ -626,6 +645,7 @@ func (s *Snap) TotalSize() (total uint64) {
 	return
 }
 
+// Combination of both saveCFFiles and saveMetaFile.
 func (s *Snap) Save() error {
 	log.Debugf("saving to %s", s.MetaFile.Path)
 	for _, cfFile := range s.CFFiles {

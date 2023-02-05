@@ -26,12 +26,14 @@ func NewServerTransport(raftClient *RaftClient, snapScheduler chan<- worker.Task
 	}
 }
 
+// Get the store from the message and then send a message to that raft store
 func (t *ServerTransport) Send(msg *raft_serverpb.RaftMessage) error {
 	storeID := msg.GetToPeer().GetStoreId()
 	t.SendStore(storeID, msg)
 	return nil
 }
 
+// Send a message to a raft store
 func (t *ServerTransport) SendStore(storeID uint64, msg *raft_serverpb.RaftMessage) {
 	addr := t.raftClient.GetAddr(storeID)
 	if addr != "" {
@@ -47,6 +49,7 @@ func (t *ServerTransport) SendStore(storeID uint64, msg *raft_serverpb.RaftMessa
 	t.Resolve(storeID, msg)
 }
 
+// Pushes a task to the worker to resolve the address of a raft store
 func (t *ServerTransport) Resolve(storeID uint64, msg *raft_serverpb.RaftMessage) {
 	callback := func(addr string, err error) {
 		// clear resolving

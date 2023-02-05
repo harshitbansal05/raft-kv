@@ -57,6 +57,7 @@ func NewSnapManager(path string) *SnapManager {
 	return new(SnapManagerBuilder).Build(path)
 }
 
+// Creates base directory (if not exists). Loops over the files in this directory: If a tmp file, removes it. If a .sst file, adds it's size to sm.snapSize.
 func (sm *SnapManager) Init() error {
 	fi, err := os.Stat(sm.base)
 	if os.IsNotExist(err) {
@@ -91,6 +92,8 @@ func (sm *SnapManager) Init() error {
 	return nil
 }
 
+// Loops over the meta files in base directory; Constructs the SnapKey from the file's name. If the SnapKey key does not exist in th sm.registry, adds
+// it to the result. Lastly, sorts the result and returns.
 func (sm *SnapManager) ListIdleSnap() ([]SnapKeyWithSending, error) {
 	fis, err := ioutil.ReadDir(sm.base)
 	if err != nil {
@@ -163,6 +166,7 @@ func (sm *SnapManager) GetTotalSnapSize() uint64 {
 	return uint64(atomic.LoadInt64(sm.snapSize))
 }
 
+// If the total snapshot size exceeds the max size, deletes old idle snaps. Then, calls NewSnapForBuilding().
 func (sm *SnapManager) GetSnapshotForBuilding(key SnapKey) (Snapshot, error) {
 	if sm.GetTotalSnapSize() > sm.MaxTotalSize {
 		err := sm.deleteOldIdleSnaps()
@@ -173,6 +177,8 @@ func (sm *SnapManager) GetSnapshotForBuilding(key SnapKey) (Snapshot, error) {
 	return NewSnapForBuilding(sm.base, key, sm.snapSize, sm)
 }
 
+// Calls sm.GetSnapshotForSending() for idle snaps; filters sending snaps from them; Calls sm.GetSnapshotForSending(); Sorts them by the modification time;
+// Calls sm.DeleteSnapshot() for them till the total suize exceeds the max size.
 func (sm *SnapManager) deleteOldIdleSnaps() error {
 	idleSnaps, err := sm.ListIdleSnap()
 	if err != nil {

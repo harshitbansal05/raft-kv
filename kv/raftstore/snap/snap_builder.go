@@ -24,6 +24,7 @@ func newSnapBuilder(cfFiles []*CFFile, dbSnap *badger.Txn, region *metapb.Region
 	}
 }
 
+// For a region, Adds entries to the snapshots (CF wise) from the raft entries.
 func (b *snapBuilder) build() error {
 	defer b.txn.Discard()
 	startKey, endKey := b.region.StartKey, b.region.EndKey

@@ -69,6 +69,7 @@ func newRaftClient(config *config.Config) *RaftClient {
 	}
 }
 
+// Gets connection object for an address
 func (c *RaftClient) getConn(addr string, regionID uint64) (*raftConn, error) {
 	c.RLock()
 	conn, ok := c.conns[addr]
@@ -91,6 +92,7 @@ func (c *RaftClient) getConn(addr string, regionID uint64) (*raftConn, error) {
 	return newConn, nil
 }
 
+// Sends a msg using the connection object for the provided addr
 func (c *RaftClient) Send(storeID uint64, addr string, msg *raft_serverpb.RaftMessage) error {
 	conn, err := c.getConn(addr, msg.GetRegionId())
 	if err != nil {
